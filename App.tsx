@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { useState, useEffect } from 'react';
 import { CURRENCY, CATEGORIES } from './constants/theme';
+import { VIP_CONFIG } from './constants/version';
+import { checkVIPStatus, purchaseVIP, restorePurchases, initIAP } from './services/iap';
 import { templateData } from './features/templates/templates';
 import {
   getSubscriptions,
@@ -18,6 +20,8 @@ import {
   requestNotificationPermission,
   scheduleBillingReminders,
 } from './services/notifications';
+import VIPScreen from './components/VIPScreen';
+import AdBanner from './components/AdBanner';
 
 // ─── 顏色系統 ────────────────────────────────────────────────
 const C = {
@@ -80,16 +84,26 @@ export default function App() {
   const [paymentFee, setPaymentFee] = useState('');
   const [paymentReward, setPaymentReward] = useState('');
 
+  // ─── VIP 狀態 ───────────────────────────────────────────────
+  const [isVIP, setIsVIP] = useState(false);
+  const [showVIPModal, setShowVIPModal] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
+
   // ─── 初始化：從 Storage 載入資料 ────────────────────────────
   useEffect(() => {
     async function loadData() {
       try {
-        const [savedSubs, savedPMs] = await Promise.all([
+        const [savedSubs, savedPMs, vipStatus] = await Promise.all([
           getSubscriptions(),
           getPaymentMethods(),
+          checkVIPStatus(),
         ]);
         setSubscriptions(savedSubs);
         setPaymentMethods(savedPMs);
+        setIsVIP(vipStatus);
+
+        // 初始化 IAP
+        await initIAP();
 
         const hasPermission = await requestNotificationPermission();
         setNotificationsEnabled(hasPermission);
@@ -124,6 +138,20 @@ export default function App() {
       Alert.alert('請填寫完整', '請填寫訂閱名稱和價格');
       return;
     }
+    
+    // ── 免費版訂閱數量限制 ──
+    if (!isVIP && !editingId && subscriptions.length >= VIP_CONFIG.FREE_LIMIT) {
+      Alert.alert(
+        '已達到上限',
+        `免費版最多可管理 ${VIP_CONFIG.FREE_LIMIT} 筆訂閱。升級 VIP 解鎖無限制！`,
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '升級 VIP', onPress: () => setShowVIPModal(true) },
+        ]
+      );
+      return;
+    }
+    
     const now = new Date().toISOString();
     let updated: Subscription[];
 
@@ -172,6 +200,37 @@ export default function App() {
     setSubscriptions(updated);
     await saveSubscriptions(updated);
     if (notificationsEnabled) await scheduleBillingReminders(updated);
+  };
+
+  // ─── VIP 購買 ───────────────────────────────────────────────
+  const handlePurchaseVIP = async () => {
+    if (purchasing) return;
+    setPurchasing(true);
+    try {
+      const result = await purchaseVIP();
+      if (result.success) {
+        setIsVIP(true);
+        setShowVIPModal(false);
+        Alert.alert('恭喜', '您已成功升級為 VIP！');
+      } else if (result.error && result.error !== '使用者取消') {
+        Alert.alert('購買失敗', result.error);
+      }
+    } catch (e) {
+      Alert.alert('錯誤', '購買過程中發生錯誤，請稍後再試');
+    } finally {
+      setPurchasing(false);
+    }
+  };
+
+  const handleRestorePurchases = async () => {
+    const restored = await restorePurchases();
+    if (restored) {
+      setIsVIP(true);
+      setShowVIPModal(false);
+      Alert.alert('復原成功', '已恢復您的 VIP 會員資格');
+    } else {
+      Alert.alert('復原失敗', '找不到之前的購買記錄');
+    }
   };
 
   // ─── 刪除訂閱 ────────────────────────────────────────────────
@@ -258,11 +317,24 @@ export default function App() {
   }
 
   // ─── 主畫面 ───────────────────────────────────────────────────
+  const subCount = subscriptions.length;
+  const atLimit = !isVIP && subCount >= VIP_CONFIG.FREE_LIMIT;
+  
   return (
     <View style={s.container}>
       {/* ── Header ── */}
       <View style={s.header}>
-        <Text style={s.headerTitle}>訂閱管家</Text>
+        <View style={s.headerLeft}>
+          <Text style={s.headerTitle}>訂閱管家</Text>
+          {!isVIP && (
+            <TouchableOpacity 
+              style={s.vipBadgeSmall} 
+              onPress={() => setShowVIPModal(true)}
+            >
+              <Text style={s.vipBadgeText}>VIP</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <TouchableOpacity style={s.headerBtn} onPress={() => setShowPaymentForm(true)}>
           <Text style={s.headerBtnText}>💳 支付方式</Text>
         </TouchableOpacity>
@@ -277,8 +349,12 @@ export default function App() {
         </Text>
         <View style={s.heroStats}>
           <View style={s.heroStat}>
-            <Text style={s.heroStatVal}>{activeSubs.length} 項</Text>
-            <Text style={s.heroStatLabel}>啟用中</Text>
+            {isVIP ? (
+              <Text style={s.heroStatVal}>{activeSubs.length} 項</Text>
+            ) : (
+              <Text style={s.heroStatVal}>{subscriptions.length}/{VIP_CONFIG.FREE_LIMIT}</Text>
+            )}
+            <Text style={s.heroStatLabel}>{isVIP ? '啟用中' : '已用/上限'}</Text>
           </View>
           <View style={[s.heroStat, s.heroStatBorder]}>
             <Text style={s.heroStatVal}>{CURRENCY} {yearlyTotal.toFixed(0)}</Text>
@@ -556,7 +632,7 @@ export default function App() {
 
       {/* 刪除確認彈窗 */}
       {deleteModalVisible && (
-        <View style={s.modalOverlay}>
+        <View style={s.deleteModalOverlay}>
           <View style={s.deleteModal}>
             <Text style={s.deleteModalTitle}>確認刪除</Text>
             <Text style={s.deleteModalText}>確定要刪除「{deletingName}」嗎？</Text>
@@ -571,6 +647,19 @@ export default function App() {
           </View>
         </View>
       )}
+
+      {/* ── 廣告橫幅（免費版） ── */}
+      {!isVIP && (
+        <AdBanner onUpgradePress={() => setShowVIPModal(true)} />
+      )}
+
+      {/* ── VIP 升級彈窗 ── */}
+      <VIPScreen
+        visible={showVIPModal}
+        onClose={() => setShowVIPModal(false)}
+        onPurchase={handlePurchaseVIP}
+        onRestore={handleRestorePurchases}
+      />
 
       <StatusBar style="dark" />
     </View>
@@ -613,6 +702,13 @@ const s = StyleSheet.create({
     backgroundColor: C.white, borderBottomWidth: 0.5, borderBottomColor: C.borderLight,
   },
   headerTitle: { fontSize: 20, fontWeight: '500', color: C.text, letterSpacing: -0.3 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  vipBadgeSmall: {
+    backgroundColor: '#FFD700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4,
+  },
+  vipBadgeText: {
+    fontSize: 10, fontWeight: '700', color: '#78350F',
+  },
   headerBtn: {
     backgroundColor: C.white, borderWidth: 0.5, borderColor: '#D1D9E0',
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
@@ -713,7 +809,7 @@ const s = StyleSheet.create({
   // 表單
   form: {
     backgroundColor: C.white, borderTopWidth: 0.5, borderTopColor: C.borderLight,
-    padding: 20, maxHeight: '72%',
+    padding: 20, flex:1,
   },
   formHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
@@ -761,7 +857,7 @@ const s = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: C.white, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, paddingBottom: 40, maxHeight: '82%',
+    padding: 20, paddingBottom: 40, flex:1,
   },
   pmList: { maxHeight: 160, marginBottom: 8 },
   pmItem: {
@@ -775,7 +871,7 @@ const s = StyleSheet.create({
   pmAddTitle: { fontSize: 14, fontWeight: '500', color: C.text, marginBottom: 4 },
 
   // 刪除確認彈窗
-  modalOverlay: {
+  deleteModalOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center', alignItems: 'center', zIndex: 999,

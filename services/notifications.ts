@@ -145,7 +145,7 @@ async function scheduleBillingReminder(subscription: Subscription): Promise<void
     try {
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: '� 今日扣款',
+          title: '今日扣款',
           body: `${subscription.name} 今天將扣款 ${subscription.currency}${subscription.price}，注意帳戶變動！`,
           data: { subscriptionId: subscription.id, type: 'today' },
           sound: 'default',
