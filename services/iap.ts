@@ -14,7 +14,7 @@ import {
 } from 'expo-iap';
 
 // 測試模式開關（開發時設為 true，上架前設為 false）
-const TEST_MODE = true;
+const TEST_MODE = false;
 
 // 購買結果類型
 export interface PurchaseResult {
