@@ -118,7 +118,7 @@ async function scheduleBillingReminder(subscription: Subscription): Promise<void
       await Notifications.scheduleNotificationAsync({
         content: {
           title: '📅 扣款提醒',
-          body: `${subscription.name} 將在 ${formatDate(billingDate)} 扣款 ${subscription.currency}${subscription.price}，請確保帳戶餘額充足`,
+          body: `${subscription.name} 將在 ${formatDate(billingDate)} 扣款 ${subscription.currency}${subscription.price}，請確保帳戶餘額充足，仍在使用中嗎？若不需要可考慮取消訂閱。`,
           data: { subscriptionId: subscription.id, type: '2days' },
           sound: 'default',
         },

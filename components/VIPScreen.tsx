@@ -40,6 +40,7 @@ export default function VIPScreen({ visible, onClose, onPurchase, onRestore }: V
               <Ionicons name="checkmark-circle" size={20} color="#059669" />
               <Text style={styles.featureText}>無訂閱數量限制</Text>
             </View>
+            {/*
             <View style={styles.featureItem}>
               <Ionicons name="checkmark-circle" size={20} color="#059669" />
               <Text style={styles.featureText}>移除所有廣告</Text>
@@ -56,6 +57,7 @@ export default function VIPScreen({ visible, onClose, onPurchase, onRestore }: V
               <Ionicons name="checkmark-circle" size={20} color="#059669" />
               <Text style={styles.featureText}>未來更多功能</Text>
             </View>
+            */}
           </View>
 
           {/* 價格 */}
@@ -77,7 +79,6 @@ export default function VIPScreen({ visible, onClose, onPurchase, onRestore }: V
           {/* 說明 */}
           <Text style={styles.note}>
             購買後可永久使用完整功能{'\n'}
-            如有問題請聯繫客服
           </Text>
         </View>
       </View>
