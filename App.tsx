@@ -3,7 +3,9 @@ import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   TextInput, Alert, Modal, ActivityIndicator,
 } from 'react-native';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { NavigationContainer, useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { CURRENCY, CATEGORIES } from './constants/theme';
 import { VIP_CONFIG } from './constants/version';
 import { checkVIPStatus, purchaseVIP, restorePurchases, initIAP } from './services/iap';
@@ -22,6 +24,7 @@ import {
 } from './services/notifications';
 import VIPScreen from './components/VIPScreen';
 import AdBanner from './components/AdBanner';
+import AddSubscriptionScreen from './screens/AddSubscriptionScreen';
 
 // ─── 顏色系統 ────────────────────────────────────────────────
 const C = {
@@ -51,7 +54,50 @@ const C = {
   pillPausedBorder: '#E2E8F0',
 };
 
-export default function App() {
+// ─── 導航類型定義 ────────────────────────────────────────────
+type RootStackParamList = {
+  Home: undefined;
+  AddSubscription: {
+    editingId?: string;
+    editData?: Subscription;
+    templateName?: string;
+    templatePrice?: number;
+    templateCycle?: 'monthly' | 'quarterly' | 'yearly';
+    subscriptionCount?: number;
+    isVIP?: boolean;
+  };
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+// ─── 小型 Label 元件 ──────────────────────────────────────────
+function FormLabel({ children }: { children: string }) {
+  return <Text style={s.formLabel}>{children}</Text>;
+}
+
+// ─── 從訂閱名稱取得品牌色 ───────────────────────────────────
+const BRAND_COLORS: Record<string, string> = {
+  Netflix: '#E50914',
+  Spotify: '#1DB954',
+  'YouTube Premium': '#FF0000',
+  KKBOX: '#00BFFF',
+  '巴哈姆特動畫瘋': '#FF6600',
+  Gogoro: '#00B900',
+  '健身工廠': '#F59E0B',
+  'World Gym': '#1A56DB',
+};
+function tplColor(name: string): string | undefined {
+  return BRAND_COLORS[name];
+}
+
+const cycleLabel = (c: string) =>
+  c === 'monthly' ? '月繳' : c === 'yearly' ? '年繳' : '季繳';
+
+// ─── 主頁面元件 ────────────────────────────────────────────────
+function HomeScreen() {
+  const navigation = useNavigation<any>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Home'>>();
+
   // ─── 載入狀態 ───────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
 
@@ -63,26 +109,13 @@ export default function App() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState('');
 
-  // ─── 訂閱表單狀態 ───────────────────────────────────────────
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [price, setPrice] = useState('');
-  const [cycle, setCycle] = useState<'monthly' | 'yearly' | 'quarterly'>('monthly');
-  const [nextBillingDate, setNextBillingDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
-  const [paymentMethodId, setPaymentMethodId] = useState('1');
-  const [bankFee, setBankFee] = useState('');
-  const [category, setCategory] = useState('');
-  const [note, setNote] = useState('');
-
   // ─── 支付方式表單狀態 ────────────────────────────────────────
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentName, setPaymentName] = useState('');
   const [paymentBank, setPaymentBank] = useState('');
   const [paymentFee, setPaymentFee] = useState('');
   const [paymentReward, setPaymentReward] = useState('');
+  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
 
   // ─── VIP 狀態 ───────────────────────────────────────────────
   const [isVIP, setIsVIP] = useState(false);
@@ -90,117 +123,34 @@ export default function App() {
   const [purchasing, setPurchasing] = useState(false);
 
   // ─── 初始化：從 Storage 載入資料 ────────────────────────────
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [savedSubs, savedPMs, vipStatus] = await Promise.all([
-          getSubscriptions(),
-          getPaymentMethods(),
-          checkVIPStatus(),
-        ]);
-        setSubscriptions(savedSubs);
-        setPaymentMethods(savedPMs);
-        setIsVIP(vipStatus);
+  useFocusEffect(
+    useCallback(() => {
+      async function loadData() {
+        try {
+          const [savedSubs, savedPMs, vipStatus] = await Promise.all([
+            getSubscriptions(),
+            getPaymentMethods(),
+            checkVIPStatus(),
+          ]);
+          setSubscriptions(savedSubs);
+          setPaymentMethods(savedPMs);
+          setIsVIP(vipStatus);
 
-        // 初始化 IAP
-        await initIAP();
+          // 初始化 IAP
+          await initIAP();
 
-        const hasPermission = await requestNotificationPermission();
-        setNotificationsEnabled(hasPermission);
-        if (hasPermission) await scheduleBillingReminders(savedSubs);
-      } catch (e) {
-        console.error('載入資料失敗:', e);
-      } finally {
-        setLoading(false);
+          const hasPermission = await requestNotificationPermission();
+          setNotificationsEnabled(hasPermission);
+          if (hasPermission) await scheduleBillingReminders(savedSubs);
+        } catch (e) {
+          console.error('載入資料失敗:', e);
+        } finally {
+          setLoading(false);
+        }
       }
-    }
-    loadData();
-  }, []);
-
-  // ─── 工具：重置訂閱表單 ──────────────────────────────────────
-  const resetForm = () => {
-    setName(''); setPrice(''); setCycle('monthly');
-    setNextBillingDate(new Date().toISOString().split('T')[0]);
-    setPaymentMethodId('1'); setBankFee(''); setCategory(''); setNote('');
-    setEditingId(null);
-  };
-
-  // ─── 使用快速模板 ────────────────────────────────────────────
-  const useTemplate = (template: any) => {
-    setName(template.name);
-    setPrice(template.defaultPrice.toString());
-    setCycle(template.cycle);
-  };
-
-  // ─── 新增 / 更新訂閱 ─────────────────────────────────────────
-  const saveSubscription = async () => {
-    if (!name || !price) {
-      Alert.alert('請填寫完整', '請填寫訂閱名稱和價格');
-      return;
-    }
-    
-    // ── 免費版訂閱數量限制 ──
-    if (!isVIP && !editingId && subscriptions.length >= VIP_CONFIG.FREE_LIMIT) {
-      Alert.alert(
-        '已達到上限',
-        `免費版最多可管理 ${VIP_CONFIG.FREE_LIMIT} 筆訂閱。升級 VIP 解鎖無限制！`,
-        [
-          { text: '取消', style: 'cancel' },
-          { text: '升級 VIP', onPress: () => setShowVIPModal(true) },
-        ]
-      );
-      return;
-    }
-    
-    const now = new Date().toISOString();
-    let updated: Subscription[];
-
-    if (editingId) {
-      updated = subscriptions.map(sub =>
-        sub.id === editingId
-          ? { ...sub, name, price: parseFloat(price), currency: CURRENCY, cycle,
-              nextBillingDate, paymentMethodId, bankFee: parseFloat(bankFee) || 0,
-              category, note, updatedAt: now }
-          : sub
-      );
-    } else {
-      const newSub: Subscription = {
-        id: Date.now().toString(), name, price: parseFloat(price),
-        currency: CURRENCY, cycle, nextBillingDate, paymentMethodId,
-        bankFee: parseFloat(bankFee) || 0, category, note,
-        status: 'active', createdAt: now, updatedAt: now,
-      };
-      updated = [...subscriptions, newSub];
-    }
-
-    setSubscriptions(updated);
-    await saveSubscriptions(updated);
-    if (notificationsEnabled) await scheduleBillingReminders(updated);
-    resetForm();
-    setShowForm(false);
-  };
-
-  // ─── 編輯訂閱 ────────────────────────────────────────────────
-  const editSubscription = (sub: Subscription) => {
-    setEditingId(sub.id); setName(sub.name); setPrice(sub.price.toString());
-    setCycle(sub.cycle); setNextBillingDate(sub.nextBillingDate);
-    setPaymentMethodId(sub.paymentMethodId); setBankFee(sub.bankFee.toString());
-    setCategory(sub.category || ''); setNote(sub.note || '');
-    setShowForm(true);
-  };
-
-  // ─── 切換啟用 / 暫停 ─────────────────────────────────────────
-  const toggleStatus = async (id: string) => {
-    const updated = subscriptions.map(sub =>
-      sub.id === id
-        ? { ...sub, status: sub.status === 'active' ? 'paused' : 'active',
-            updatedAt: new Date().toISOString() }
-        : sub
-    );
-    setSubscriptions(updated);
-    await saveSubscriptions(updated);
-    if (notificationsEnabled) await scheduleBillingReminders(updated);
-  };
+      loadData();
+    }, [])
+  );
 
   // ─── VIP 購買 ───────────────────────────────────────────────
   const handlePurchaseVIP = async () => {
@@ -266,7 +216,68 @@ export default function App() {
     setPaymentMethods(updated);
     await savePaymentMethods(updated);
     setPaymentName(''); setPaymentBank(''); setPaymentFee(''); setPaymentReward('');
-    setShowPaymentForm(false);
+  };
+
+  // ─── 刪除支付方式 ────────────────────────────────────────────
+  const deletePaymentMethod = async (id: string) => {
+    Alert.alert(
+      '確認刪除',
+      '確定要刪除這個支付方式嗎？',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '刪除',
+          style: 'destructive',
+          onPress: async () => {
+            const updated = paymentMethods.filter(pm => pm.id !== id);
+            setPaymentMethods(updated);
+            await savePaymentMethods(updated);
+          },
+        },
+      ]
+    );
+  };
+
+  // ─── 切換啟用 / 暫停 ─────────────────────────────────────────
+  const toggleStatus = async (id: string) => {
+    const updated = subscriptions.map(sub =>
+      sub.id === id
+        ? { ...sub, status: sub.status === 'active' ? 'paused' : 'active',
+            updatedAt: new Date().toISOString() }
+        : sub
+    );
+    setSubscriptions(updated);
+    await saveSubscriptions(updated);
+    if (notificationsEnabled) await scheduleBillingReminders(updated);
+  };
+
+  // ─── 跳轉到新增頁面 ──────────────────────────────────────────
+  const navigateToAdd = () => {
+    navigation.navigate('AddSubscription', {
+      subscriptionCount: subscriptions.length,
+      isVIP,
+    });
+  };
+
+  // ─── 跳轉到編輯頁面 ──────────────────────────────────────────
+  const navigateToEdit = (sub: Subscription) => {
+    navigation.navigate('AddSubscription', {
+      editingId: sub.id,
+      editData: sub,
+      subscriptionCount: subscriptions.length,
+      isVIP,
+    });
+  };
+
+  // ─── 快速新增（從模板）───────────────────────────────────────
+  const handleQuickAdd = (template: any) => {
+    navigation.navigate('AddSubscription', {
+      templateName: template.name,
+      templatePrice: template.defaultPrice,
+      templateCycle: template.cycle,
+      subscriptionCount: subscriptions.length,
+      isVIP,
+    });
   };
 
   // ─── 計算數據 ─────────────────────────────────────────────────
@@ -303,9 +314,6 @@ export default function App() {
   const getPaymentMethodName = (id: string) =>
     paymentMethods.find(p => p.id === id)?.name ?? '未設定';
 
-  const cycleLabel = (c: string) =>
-    c === 'monthly' ? '月繳' : c === 'yearly' ? '年繳' : '季繳';
-
   // ─── 載入畫面 ─────────────────────────────────────────────────
   if (loading) {
     return (
@@ -317,9 +325,6 @@ export default function App() {
   }
 
   // ─── 主畫面 ───────────────────────────────────────────────────
-  const subCount = subscriptions.length;
-  const atLimit = !isVIP && subCount >= VIP_CONFIG.FREE_LIMIT;
-  
   return (
     <View style={s.container}>
       {/* ── Header ── */}
@@ -370,13 +375,13 @@ export default function App() {
       <ScrollView style={s.scroll} showsVerticalScrollIndicator={false}>
         {/* ── 快速新增模板 ── */}
         <View style={s.section}>
-          <Text style={s.sectionLabel}>快速新增</Text>
+          <Text style={s.sectionLabel}>快速新增✚</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {templateData.map((tpl) => (
               <TouchableOpacity
                 key={tpl.id}
                 style={s.tplChip}
-                onPress={() => { useTemplate(tpl); setShowForm(true); }}
+                onPress={() => handleQuickAdd(tpl)}
               >
                 {/* 品牌色點 */}
                 <View style={[s.tplDot, { backgroundColor: tpl.color ?? C.blue }]} />
@@ -427,7 +432,6 @@ export default function App() {
                             <Text style={s.subMetaText}>{sub.category}</Text>
                           </>
                         ) : null}
-                        {/* 合租顯示（從 note 解析或直接顯示） */}
                       </View>
 
                       {/* 即將扣款 or 下次扣款日 */}
@@ -476,7 +480,7 @@ export default function App() {
 
                     {/* 編輯 / 刪除 */}
                     <View style={s.subActions}>
-                      <TouchableOpacity onPress={() => editSubscription(sub)} style={s.actionBtn}>
+                      <TouchableOpacity onPress={() => navigateToEdit(sub)} style={s.actionBtn}>
                         <Text style={s.actionBtnText}>✏️</Text>
                       </TouchableOpacity>
                       <TouchableOpacity 
@@ -497,92 +501,10 @@ export default function App() {
         <View style={{ height: 16 }} />
       </ScrollView>
 
-      {/* ── 新增按鈕 / 訂閱表單 ── */}
-      {!showForm ? (
-        <TouchableOpacity style={s.fab} onPress={() => setShowForm(true)}>
-          <Text style={s.fabText}>＋ 新增訂閱</Text>
-        </TouchableOpacity>
-      ) : (
-        <View style={s.form}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {/* 表單 Header */}
-            <View style={s.formHeader}>
-              <Text style={s.formTitle}>{editingId ? '編輯訂閱' : '新增訂閱'}</Text>
-              <TouchableOpacity onPress={() => { resetForm(); setShowForm(false); }}>
-                <Text style={s.formClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <FormLabel>訂閱名稱</FormLabel>
-            <TextInput style={s.input} value={name} onChangeText={setName} placeholder="例如：Netflix" placeholderTextColor={C.textMuted} />
-
-            <FormLabel>價格（{CURRENCY}）</FormLabel>
-            <TextInput style={s.input} value={price} onChangeText={setPrice} placeholder="0" keyboardType="numeric" placeholderTextColor={C.textMuted} />
-
-            <FormLabel>扣款週期</FormLabel>
-            <View style={s.cycleRow}>
-              {(['monthly', 'quarterly', 'yearly'] as const).map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[s.cycleBtn, cycle === c && s.cycleBtnActive]}
-                  onPress={() => setCycle(c)}
-                >
-                  <Text style={[s.cycleBtnText, cycle === c && s.cycleBtnTextActive]}>
-                    {cycleLabel(c)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <FormLabel>下次扣款日期</FormLabel>
-            <TextInput style={s.input} value={nextBillingDate} onChangeText={setNextBillingDate} placeholder="YYYY-MM-DD" placeholderTextColor={C.textMuted} />
-
-            <FormLabel>支付方式</FormLabel>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipScroll}>
-              {paymentMethods.map((pm) => (
-                <TouchableOpacity
-                  key={pm.id}
-                  style={[s.chip, paymentMethodId === pm.id && s.chipActive]}
-                  onPress={() => setPaymentMethodId(pm.id)}
-                >
-                  <Text style={[s.chipText, paymentMethodId === pm.id && s.chipTextActive]}>
-                    {pm.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <FormLabel>銀行手續費（選填，{CURRENCY}）</FormLabel>
-            <TextInput style={s.input} value={bankFee} onChangeText={setBankFee} placeholder="0" keyboardType="numeric" placeholderTextColor={C.textMuted} />
-
-            <FormLabel>分類（選填）</FormLabel>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipScroll}>
-              {CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[s.chip, category === cat && s.chipActive]}
-                  onPress={() => setCategory(cat)}
-                >
-                  <Text style={[s.chipText, category === cat && s.chipTextActive]}>{cat}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <FormLabel>備註（選填）</FormLabel>
-            <TextInput
-              style={[s.input, s.inputTextArea]}
-              value={note} onChangeText={setNote}
-              placeholder="例如：家庭方案 / 合租備注..."
-              multiline numberOfLines={3}
-              placeholderTextColor={C.textMuted}
-            />
-
-            <TouchableOpacity style={s.saveBtn} onPress={saveSubscription}>
-              <Text style={s.saveBtnText}>{editingId ? '更新訂閱' : '儲存訂閱'}</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      )}
+      {/* ── 新增按鈕 ── */}
+      <TouchableOpacity style={s.fab} onPress={navigateToAdd}>
+        <Text style={s.fabText}>＋ 新增訂閱</Text>
+      </TouchableOpacity>
 
       {/* ── 支付方式 Modal ── */}
       <Modal visible={showPaymentForm} animationType="slide" transparent>
@@ -597,14 +519,27 @@ export default function App() {
 
             {/* 現有支付方式清單 */}
             <ScrollView style={s.pmList} showsVerticalScrollIndicator={false}>
-              {paymentMethods.map((pm) => (
-                <View key={pm.id} style={s.pmItem}>
-                  <Text style={s.pmName}>{pm.name}</Text>
-                  {pm.bank && <Text style={s.pmMeta}>{pm.bank}</Text>}
-                  {pm.fee && <Text style={s.pmFee}>手續費 {pm.fee}%</Text>}
-                  {pm.reward && <Text style={s.pmReward}>回饋：{pm.reward}</Text>}
-                </View>
-              ))}
+              {paymentMethods.length === 0 ? (
+                <Text style={s.pmEmptyText}>還沒有支付方式</Text>
+              ) : (
+                paymentMethods.map((pm) => (
+                  <View key={pm.id} style={s.pmItem}>
+                    <View style={s.pmItemContent}>
+                      <Text style={s.pmName}>{pm.name}</Text>
+                      {pm.bank && <Text style={s.pmMeta}>{pm.bank}</Text>}
+                      {pm.fee && <Text style={s.pmFee}>手續費 {pm.fee}%</Text>}
+                      {pm.reward && <Text style={s.pmReward}>回饋：{pm.reward}</Text>}
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => deletePaymentMethod(pm.id)}
+                      style={s.pmDeleteBtn}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Text style={s.pmDeleteBtnText}>X</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
             </ScrollView>
 
             {/* 新增支付方式表單 */}
@@ -614,13 +549,13 @@ export default function App() {
             <FormLabel>名稱</FormLabel>
             <TextInput style={s.input} value={paymentName} onChangeText={setPaymentName} placeholder="例如：國泰 CUBE 卡" placeholderTextColor={C.textMuted} />
 
-            <FormLabel>銀行（選填）</FormLabel>
+            {/*<FormLabel>銀行（選填）</FormLabel>
             <TextInput style={s.input} value={paymentBank} onChangeText={setPaymentBank} placeholder="例如：國泰世華" placeholderTextColor={C.textMuted} />
 
             <FormLabel>海外手續費 %（選填）</FormLabel>
             <TextInput style={s.input} value={paymentFee} onChangeText={setPaymentFee} placeholder="1.5" keyboardType="numeric" placeholderTextColor={C.textMuted} />
-
-            <FormLabel>回饋說明（選填）</FormLabel>
+            */}
+            <FormLabel>說明（選填）</FormLabel>
             <TextInput style={s.input} value={paymentReward} onChangeText={setPaymentReward} placeholder="例如：訂閱服務 3% 回饋" placeholderTextColor={C.textMuted} />
 
             <TouchableOpacity style={s.saveBtn} onPress={savePaymentMethod}>
@@ -666,25 +601,22 @@ export default function App() {
   );
 }
 
-// ─── 小型 Label 元件 ──────────────────────────────────────────
-function FormLabel({ children }: { children: string }) {
-  return <Text style={s.formLabel}>{children}</Text>;
-}
-
-// ─── 從訂閱名稱取得品牌色（對應 templateData 中的 color 欄位）──
-// 若 templateData 已有 color 屬性可直接使用，這裡提供 fallback map
-const BRAND_COLORS: Record<string, string> = {
-  Netflix: '#E50914',
-  Spotify: '#1DB954',
-  'YouTube Premium': '#FF0000',
-  KKBOX: '#00BFFF',
-  '巴哈姆特動畫瘋': '#FF6600',
-  Gogoro: '#00B900',
-  '健身工廠': '#F59E0B',
-  'World Gym': '#1A56DB',
-};
-function tplColor(name: string): string | undefined {
-  return BRAND_COLORS[name];
+// ─── App 導航容器 ──────────────────────────────────────────────
+export default function App() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen 
+          name="AddSubscription" 
+          component={AddSubscriptionScreen}
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
 }
 
 // ─── 樣式 ─────────────────────────────────────────────────────
@@ -806,67 +738,25 @@ const s = StyleSheet.create({
   },
   fabText: { color: C.white, fontSize: 15, fontWeight: '500' },
 
-  // 表單
-  form: {
-    backgroundColor: C.white, borderTopWidth: 0.5, borderTopColor: C.borderLight,
-    padding: 20, flex:1,
-  },
-  formHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 20,
-  },
-  formTitle: { fontSize: 18, fontWeight: '500', color: C.text },
-  formClose: { fontSize: 20, color: C.textMuted, padding: 4 },
-  formLabel: { fontSize: 13, fontWeight: '500', color: C.text, marginTop: 14, marginBottom: 7 },
-  input: {
-    borderWidth: 0.5, borderColor: C.border, borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 11, fontSize: 15,
-    backgroundColor: '#FAFAFA', color: C.text,
-  },
-  inputTextArea: { height: 80, textAlignVertical: 'top' },
-
-  // 週期選擇
-  cycleRow: { flexDirection: 'row', gap: 8 },
-  cycleBtn: {
-    flex: 1, borderWidth: 0.5, borderColor: C.border, borderRadius: 8,
-    paddingVertical: 10, alignItems: 'center', backgroundColor: '#FAFAFA',
-  },
-  cycleBtnActive: { borderColor: C.blue, backgroundColor: C.blueLight },
-  cycleBtnText: { fontSize: 14, color: C.textSub },
-  cycleBtnTextActive: { color: C.blue, fontWeight: '500' },
-
-  // 通用 Chip 選擇列
-  chipScroll: { marginBottom: 2 },
-  chip: {
-    borderWidth: 0.5, borderColor: C.border, borderRadius: 20,
-    paddingHorizontal: 13, paddingVertical: 7, marginRight: 8,
-    backgroundColor: '#FAFAFA',
-  },
-  chipActive: { borderColor: C.blue, backgroundColor: C.blueLight },
-  chipText: { fontSize: 13, color: C.textSub },
-  chipTextActive: { color: C.blue, fontWeight: '500' },
-
-  // 儲存按鈕
-  saveBtn: {
-    backgroundColor: C.blue, borderRadius: 10, paddingVertical: 13,
-    alignItems: 'center', marginTop: 20, marginBottom: 8,
-  },
-  saveBtnText: { color: C.white, fontSize: 15, fontWeight: '500' },
-
   // 支付方式 Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: C.white, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, paddingBottom: 40, flex:1,
+    padding: 20, paddingBottom: 40, flex: 1, minHeight: 400,
   },
-  pmList: { maxHeight: 160, marginBottom: 8 },
+  pmList: { maxHeight: 300, marginBottom: 8 },
+  pmEmptyText: { fontSize: 13, color: C.textMuted, textAlign: 'center', paddingVertical: 20 },
   pmItem: {
+    flexDirection: 'row', alignItems: 'center',
     paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: C.borderLight,
   },
+  pmItemContent: { flex: 1 },
   pmName: { fontSize: 15, fontWeight: '500', color: C.text },
-  pmMeta: { fontSize: 12, color: C.textMuted, marginTop: 2 },
-  pmFee: { fontSize: 12, color: '#EF4444', marginTop: 1 },
-  pmReward: { fontSize: 12, color: C.green, marginTop: 1 },
+  pmMeta: { fontSize: 12, color: C.textMuted },
+  pmFee: { fontSize: 12, color: '#EF4444' },
+  pmReward: { fontSize: 12, color: C.green },
+  pmDeleteBtn: { padding: 8, marginLeft: 8, justifyContent: 'center', alignItems: 'center' },
+  pmDeleteBtnText: { fontSize: 14, color: '#dc2626', fontWeight: '600' },
   pmDivider: { height: 0.5, backgroundColor: C.borderLight, marginVertical: 16 },
   pmAddTitle: { fontSize: 14, fontWeight: '500', color: C.text, marginBottom: 4 },
 
@@ -903,4 +793,23 @@ const s = StyleSheet.create({
   deleteConfirmText: {
     fontSize: 14, color: C.white, fontWeight: '500',
   },
+
+  // 表單元件（用於支付方式 Modal）
+  formHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: 20, paddingTop: 16,
+  },
+  formTitle: { fontSize: 18, fontWeight: '500', color: C.text },
+  formClose: { fontSize: 20, color: C.textMuted, padding: 4 },
+  formLabel: { fontSize: 13, fontWeight: '500', color: C.text, marginTop: 14, marginBottom: 7 },
+  input: {
+    borderWidth: 0.5, borderColor: C.border, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 11, fontSize: 15,
+    backgroundColor: '#FAFAFA', color: C.text,
+  },
+  saveBtn: {
+    backgroundColor: C.blue, borderRadius: 10, paddingVertical: 13,
+    alignItems: 'center', marginTop: 20, marginBottom: 8,
+  },
+  saveBtnText: { color: C.white, fontSize: 15, fontWeight: '500' },
 });
