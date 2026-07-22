@@ -4,7 +4,7 @@ export const VIP_CONFIG = {
   FREE_LIMIT: 3, // 最多 3 筆訂閱
   
   // VIP 價格（NT$）
-  VIP_PRICE: 50,
+  VIP_PRICE: 99,
   
   // IAP 商品 ID（需在 Google Play / App Store 設定）
   IAP_PRODUCT_ID: 'vip_unlock',
