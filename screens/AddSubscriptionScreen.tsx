@@ -73,6 +73,7 @@ export default function AddSubscriptionScreen() {
   // VIP 狀態
   const subscriptionCount = params.subscriptionCount ?? 0;
   const isVIP = params.isVIP ?? false;
+  const isAtLimit = !isVIP && subscriptionCount >= VIP_CONFIG.FREE_LIMIT;
 
   // ─── 表單狀態 ───────────────────────────────────────────────
   const [name, setName] = useState(params.editData?.name ?? templateName ?? '');
@@ -111,6 +112,16 @@ export default function AddSubscriptionScreen() {
 
   // ─── 儲存 ─────────────────────────────────────────────────────
   const handleSave = async () => {
+    // 非 VIP 且已達限制
+    if (isAtLimit) {
+      Alert.alert(
+        '已達訂閱上限',
+        `免費版最多 ${VIP_CONFIG.FREE_LIMIT} 筆訂閱，請升級 VIP 解鎖無限新增`,
+        [{ text: '確定' }]
+      );
+      return;
+    }
+
     if (!name || !price) {
       Alert.alert('請填寫完整', '請填寫訂閱名稱和價格');
       return;
@@ -153,6 +164,15 @@ export default function AddSubscriptionScreen() {
   return (
     <View style={s.container}>
       <StatusBar style="dark" />
+
+      {/* ── 非 VIP 限制提示 ── */}
+      {isAtLimit && (
+        <View style={s.limitWarning}>
+          <Text style={s.limitWarningText}>
+            ⚠️ 免費版最多 {VIP_CONFIG.FREE_LIMIT} 筆訂閱，請升級 VIP 解鎖
+          </Text>
+        </View>
+      )}
 
       {/* ── Header ── */}
       <View style={s.header}>
@@ -274,6 +294,19 @@ export default function AddSubscriptionScreen() {
 // ─── 樣式 ─────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
+  limitWarning: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F59E0B',
+  },
+  limitWarningText: {
+    color: '#92400E',
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',

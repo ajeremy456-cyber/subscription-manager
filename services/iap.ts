@@ -45,8 +45,8 @@ export async function initIAP(): Promise<boolean> {
         if (purchase.productId === VIP_CONFIG.IAP_PRODUCT_ID) {
           await handleVIPPurchase(purchase);
         }
-        // 完成交易（對應原本的 Billing.finishTransactionAsync()）
-        await finishTransaction({ purchase, isConsumable: false });
+        // 完成交易
+        await finishTransaction(purchase);
       } catch (error) {
         console.error('[IAP] 處理購買失敗:', error);
       }
@@ -129,6 +129,11 @@ export async function purchaseVIP(): Promise<PurchaseResult> {
   }
 
   try {
+    // 檢查是否在 Expo Go 環境（不支援 IAP）
+    if (!getProducts) {
+      return { success: false, error: 'IAP 不支援此環境，請使用獨立 App' };
+    }
+
     // 取得商品資訊（對應原本的 Billing.getProductsAsync()）
     const products = await getProducts([VIP_CONFIG.IAP_PRODUCT_ID]);
 
@@ -140,7 +145,8 @@ export async function purchaseVIP(): Promise<PurchaseResult> {
     console.log('[IAP] 商品資訊:', product);
 
     // 發起購買（對應原本的 Billing.purchaseAsync()）
-    await requestPurchase({ sku: VIP_CONFIG.IAP_PRODUCT_ID });
+    // 使用正確的 API 格式
+    const result = await requestPurchase(VIP_CONFIG.IAP_PRODUCT_ID);
 
     // 購買結果由 purchaseUpdatedListener 處理
     // 這裡樂觀地返回成功，實際寫入由 listener 完成

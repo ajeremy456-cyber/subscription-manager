@@ -331,13 +331,10 @@ function HomeScreen() {
       <View style={s.header}>
         <View style={s.headerLeft}>
           <Text style={s.headerTitle}>訂閱管家</Text>
-          {!isVIP && (
-            <TouchableOpacity 
-              style={s.vipBadgeSmall} 
-              onPress={() => setShowVIPModal(true)}
-            >
+          {isVIP && (
+            <View style={s.vipBadgeSmall}>
               <Text style={s.vipBadgeText}>VIP</Text>
-            </TouchableOpacity>
+            </View>
           )}
         </View>
         <TouchableOpacity style={s.headerBtn} onPress={() => setShowPaymentForm(true)}>
