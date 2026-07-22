@@ -46,7 +46,8 @@ export async function initIAP(): Promise<boolean> {
           await handleVIPPurchase(purchase);
         }
         // 完成交易
-        await finishTransaction(purchase);
+        
+        await finishTransaction({ purchase, isConsumable: false });
       } catch (error) {
         console.error('[IAP] 處理購買失敗:', error);
       }
@@ -135,8 +136,9 @@ export async function purchaseVIP(): Promise<PurchaseResult> {
     }
 
     // 取得商品資訊（對應原本的 Billing.getProductsAsync()）
-    const products = await getProducts([VIP_CONFIG.IAP_PRODUCT_ID]);
-
+    
+    
+    const products = await getProducts({ skus: [VIP_CONFIG.IAP_PRODUCT_ID], type: 'in-app' });
     if (!products || products.length === 0) {
       return { success: false, error: '商品不存在，請稍後再試' };
     }
@@ -146,7 +148,8 @@ export async function purchaseVIP(): Promise<PurchaseResult> {
 
     // 發起購買（對應原本的 Billing.purchaseAsync()）
     // 使用正確的 API 格式
-    const result = await requestPurchase(VIP_CONFIG.IAP_PRODUCT_ID);
+    
+    await requestPurchase({ sku: VIP_CONFIG.IAP_PRODUCT_ID, type: 'in-app' });
 
     // 購買結果由 purchaseUpdatedListener 處理
     // 這裡樂觀地返回成功，實際寫入由 listener 完成
