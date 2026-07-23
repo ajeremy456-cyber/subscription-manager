@@ -16,7 +16,6 @@ export default function AdBanner({ onUpgradePress }: AdBannerProps) {
         </View>
         <View style={styles.textContainer}>
           <Text style={styles.title}>解鎖完整功能</Text>
-          <Text style={styles.subtitle}>「移除所有廣告</Text>
         </View>
       </View>
       <TouchableOpacity style={styles.upgradeBtn} onPress={onUpgradePress}>

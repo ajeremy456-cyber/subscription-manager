@@ -15,6 +15,7 @@ import {
   getPaymentMethods,
   saveSubscriptions,
   savePaymentMethods,
+  calculateActualNextBillingDate,
   type Subscription,
   type PaymentMethod,
 } from './services/storage';
@@ -111,6 +112,7 @@ function HomeScreen() {
 
   // ─── 支付方式表單狀態 ────────────────────────────────────────
   const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [paymentName, setPaymentName] = useState('');
   const [paymentBank, setPaymentBank] = useState('');
   const [paymentFee, setPaymentFee] = useState('');
@@ -291,25 +293,27 @@ function HomeScreen() {
 
   const yearlyTotal = monthlyTotal * 12;
 
-  // 判斷是否在 7 天內即將扣款
-  const isDueSoon = (dateStr: string) => {
+  // 判斷是否在 7 天內即將扣款（使用自動計算的日期）
+  const isDueSoon = (sub: Subscription) => {
+    const actualDate = calculateActualNextBillingDate(sub.nextBillingDate, sub.cycle);
     const today = new Date();
-    const due = new Date(dateStr);
+    const due = new Date(actualDate);
     const diff = (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
     return diff >= 0 && diff <= 7;
   };
 
-  // 計算距今天數文字
-  const getDueLabel = (dateStr: string) => {
+  // 計算距今天數文字（使用自動計算的日期）
+  const getDueLabel = (sub: Subscription) => {
+    const actualDate = calculateActualNextBillingDate(sub.nextBillingDate, sub.cycle);
     const today = new Date();
-    const due = new Date(dateStr);
+    const due = new Date(actualDate);
     const diff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
     if (diff === 0) return '今天扣款';
     if (diff === 1) return '明天扣款';
     return `${diff} 天後扣款`;
   };
 
-  const dueSoonCount = activeSubs.filter(s => isDueSoon(s.nextBillingDate)).length;
+  const dueSoonCount = activeSubs.filter(s => isDueSoon(s)).length;
 
   const getPaymentMethodName = (id: string) =>
     paymentMethods.find(p => p.id === id)?.name ?? '未設定';
@@ -370,37 +374,19 @@ function HomeScreen() {
       </View>
 
       <ScrollView style={s.scroll} showsVerticalScrollIndicator={false}>
-        {/* ── 快速新增模板 ── */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>快速新增✚</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {templateData.map((tpl) => (
-              <TouchableOpacity
-                key={tpl.id}
-                style={s.tplChip}
-                onPress={() => handleQuickAdd(tpl)}
-              >
-                {/* 品牌色點 */}
-                <View style={[s.tplDot, { backgroundColor: tpl.color ?? C.blue }]} />
-                <Text style={s.tplName}>{tpl.name}</Text>
-                <Text style={s.tplPrice}>{CURRENCY}{tpl.defaultPrice}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-
         {/* ── 訂閱清單 ── */}
-        <View style={[s.section, { marginTop: 8 }]}>
+        <View style={[s.section, { marginTop: 16 }]}>
           <Text style={s.sectionLabel}>我的訂閱</Text>
 
           {subscriptions.length === 0 ? (
             <View style={s.emptyCard}>
               <Text style={s.emptyTitle}>還沒有訂閱記錄</Text>
-              <Text style={s.emptySubtitle}>點擊下方按鈕或使用上方模板新增</Text>
+              <Text style={s.emptySubtitle}>點擊下方按鈕新增</Text>
             </View>
           ) : (
             subscriptions.map((sub) => {
-              const soon = sub.status === 'active' && isDueSoon(sub.nextBillingDate);
+              const soon = sub.status === 'active' && isDueSoon(sub);
+              const actualDate = calculateActualNextBillingDate(sub.nextBillingDate, sub.cycle);
               return (
                 <View
                   key={sub.id}
@@ -434,11 +420,11 @@ function HomeScreen() {
                       {/* 即將扣款 or 下次扣款日 */}
                       {soon ? (
                         <Text style={s.subDateSoon}>
-                          ⏰ {getDueLabel(sub.nextBillingDate)}（{sub.nextBillingDate.slice(5)}）
+                          ⏰ {getDueLabel(sub)}（{actualDate.slice(5)}）
                         </Text>
                       ) : (
                         <Text style={s.subDate}>
-                          {sub.status === 'paused' ? '已暫停' : `下次扣款：${sub.nextBillingDate.slice(5)}`}
+                          {sub.status === 'paused' ? '已暫停' : `下次扣款：${actualDate.slice(5)}`}
                         </Text>
                       )}
 
@@ -498,10 +484,53 @@ function HomeScreen() {
         <View style={{ height: 16 }} />
       </ScrollView>
 
-      {/* ── 新增按鈕 ── */}
-      <TouchableOpacity style={s.fab} onPress={navigateToAdd}>
-        <Text style={s.fabText}>＋ 新增訂閱</Text>
-      </TouchableOpacity>
+      {/* ── 底部雙按鈕 ── */}
+      <View style={s.bottomButtons}>
+        <TouchableOpacity style={s.quickAddBtn} onPress={() => setShowQuickAddModal(true)}>
+          <Text style={s.quickAddBtnText}>⚡ 快速新增</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.fab} onPress={navigateToAdd}>
+          <Text style={s.fabText}>＋ 新增訂閱</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── 快速新增 Modal ── */}
+      <Modal visible={showQuickAddModal} animationType="slide" transparent>
+        <View style={s.modalOverlay}>
+          <View style={s.quickAddSheet}>
+            <View style={s.formHeader}>
+              <Text style={s.formTitle}>快速新增</Text>
+              <TouchableOpacity onPress={() => setShowQuickAddModal(false)}>
+                <Text style={s.formClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {templateData.map((tpl) => (
+                <TouchableOpacity
+                  key={tpl.id}
+                  style={s.templateItem}
+                  onPress={() => {
+                    handleQuickAdd(tpl);
+                    setShowQuickAddModal(false);
+                  }}
+                >
+                  <View style={[s.templateIcon, { backgroundColor: tpl.color + '20' }]}>
+                    <Text style={[s.templateIconText, { color: tpl.color }]}>
+                      {tpl.name.slice(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={s.templateInfo}>
+                    <Text style={s.templateName}>{tpl.name}</Text>
+                    <Text style={s.templatePrice}>
+                      {CURRENCY}{tpl.defaultPrice} / {cycleLabel(tpl.cycle)}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── 支付方式 Modal ── */}
       <Modal visible={showPaymentForm} animationType="slide" transparent>
@@ -730,10 +759,42 @@ const s = StyleSheet.create({
 
   // FAB
   fab: {
-    backgroundColor: C.blue, marginHorizontal: 16, marginVertical: 12,
+    backgroundColor: C.blue, flex: 1,
     borderRadius: 12, paddingVertical: 14, alignItems: 'center',
   },
   fabText: { color: C.white, fontSize: 15, fontWeight: '500' },
+
+  // 底部雙按鈕容器
+  bottomButtons: {
+    flexDirection: 'row', gap: 12,
+    marginHorizontal: 16, marginVertical: 12,
+  },
+
+  // 快速新增按鈕
+  quickAddBtn: {
+    backgroundColor: C.white, borderWidth: 1, borderColor: C.blue,
+    flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center',
+  },
+  quickAddBtnText: { color: C.blue, fontSize: 15, fontWeight: '500' },
+
+  // 快速新增 Modal
+  quickAddSheet: {
+    backgroundColor: C.white, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 40, flex: 1,
+  },
+
+  // 模板列表項目
+  templateItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: C.borderLight,
+  },
+  templateIcon: {
+    width: 44, height: 44, borderRadius: 10, justifyContent: 'center', alignItems: 'center',
+  },
+  templateIconText: { fontSize: 14, fontWeight: '600' },
+  templateInfo: { marginLeft: 14, flex: 1 },
+  templateName: { fontSize: 15, fontWeight: '500', color: C.text },
+  templatePrice: { fontSize: 13, color: C.textMuted, marginTop: 2 },
 
   // 支付方式 Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },

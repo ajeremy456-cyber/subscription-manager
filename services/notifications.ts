@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { calculateActualNextBillingDate } from './storage';
 
 // Storage key for notifications
 const NOTIFICATION_PERMISSION_KEY = '@subscription_manager/notification_permission';
@@ -101,7 +102,12 @@ export async function scheduleBillingReminders(subscriptions: Subscription[]): P
 async function scheduleBillingReminder(subscription: Subscription): Promise<void> {
   if (!Device.isDevice) return;
 
-  const billingDate = new Date(subscription.nextBillingDate);
+  // 使用自動計算的實際下次扣款日期
+  const actualBillingDate = calculateActualNextBillingDate(
+    subscription.nextBillingDate,
+    subscription.cycle
+  );
+  const billingDate = new Date(actualBillingDate);
 
   // ========== 扣款前 2 天提醒 ==========
   const twoDaysBefore = new Date(billingDate);
@@ -192,6 +198,9 @@ export async function cancelNotificationForSubscription(subscriptionId: string):
  * 取消所有排程的通知
  */
 export async function cancelAllScheduledNotifications(): Promise<void> {
+  // 網頁版不支援
+  if (typeof window !== 'undefined') return;
+
   await Notifications.cancelAllScheduledNotificationsAsync();
   await AsyncStorage.removeItem(NOTIFICATION_SCHEDULED_KEY);
 }

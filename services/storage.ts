@@ -170,3 +170,36 @@ export async function clearAllData(): Promise<void> {
     throw error;
   }
 }
+
+// ============ 自動計算下次扣款日期 ============
+
+/**
+ * 計算實際下次扣款日期（自動推進過期的日期）
+ */
+export function calculateActualNextBillingDate(
+  storedDate: string,
+  cycle: 'monthly' | 'quarterly' | 'yearly'
+): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let nextDate = new Date(storedDate);
+  nextDate.setHours(0, 0, 0, 0);
+
+  // 如果日期已過，反覆往前推直到未來
+  while (nextDate <= today) {
+    switch (cycle) {
+      case 'monthly':
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        break;
+      case 'quarterly':
+        nextDate.setMonth(nextDate.getMonth() + 3);
+        break;
+      case 'yearly':
+        nextDate.setFullYear(nextDate.getFullYear() + 1);
+        break;
+    }
+  }
+
+  return nextDate.toISOString().split('T')[0];
+}
