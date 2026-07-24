@@ -3,7 +3,7 @@ import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   TextInput, Alert, Modal, ActivityIndicator,
 } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { NavigationContainer, useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { CURRENCY, CATEGORIES } from './constants/theme';
@@ -315,6 +315,15 @@ function HomeScreen() {
 
   const dueSoonCount = activeSubs.filter(s => isDueSoon(s)).length;
 
+  // 按下次扣款日排序（最近的在前）
+  const sortedSubscriptions = useMemo(() => {
+    return [...subscriptions].sort((a, b) => {
+      const dateA = new Date(calculateActualNextBillingDate(a.nextBillingDate, a.cycle) + 'T00:00:00');
+      const dateB = new Date(calculateActualNextBillingDate(b.nextBillingDate, b.cycle) + 'T00:00:00');
+      return dateA.getTime() - dateB.getTime();
+    });
+  }, [subscriptions]);
+
   const getPaymentMethodName = (id: string) =>
     paymentMethods.find(p => p.id === id)?.name ?? '未設定';
 
@@ -384,7 +393,7 @@ function HomeScreen() {
               <Text style={s.emptySubtitle}>點擊下方按鈕新增</Text>
             </View>
           ) : (
-            subscriptions.map((sub) => {
+            sortedSubscriptions.map((sub) => {
               const soon = sub.status === 'active' && isDueSoon(sub);
               const actualDate = calculateActualNextBillingDate(sub.nextBillingDate, sub.cycle);
               return (

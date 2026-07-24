@@ -174,6 +174,16 @@ export async function clearAllData(): Promise<void> {
 // ============ 自動計算下次扣款日期 ============
 
 /**
+ * 轉換成本地日期字串（YYYY-MM-DD）
+ */
+function toLocalDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
  * 計算實際下次扣款日期（自動推進過期的日期）
  */
 export function calculateActualNextBillingDate(
@@ -201,5 +211,5 @@ export function calculateActualNextBillingDate(
     }
   }
 
-  return nextDate.toISOString().split('T')[0];
+  return toLocalDateString(nextDate);
 }
