@@ -3,7 +3,7 @@ import {
   StyleSheet, Text, View, ScrollView, TouchableOpacity,
   TextInput, Alert,
 } from 'react-native';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { CURRENCY, CATEGORIES } from '../constants/theme';
 import { VIP_CONFIG } from '../constants/version';
@@ -106,7 +106,7 @@ export default function AddSubscriptionScreen() {
   }, []);
 
   // ─── 小型 Label 元件 ──────────────────────────────────────────
-  function FormLabel({ children }: { children: string }) {
+  function FormLabel({ children }: { children: ReactNode }) {
     return <Text style={s.formLabel}>{children}</Text>;
   }
 

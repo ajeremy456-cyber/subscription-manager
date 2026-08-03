@@ -3,23 +3,96 @@ import { VIP_CONFIG } from '../constants/version';
 import {
   initConnection,
   endConnection,
-  getProducts,
+  fetchProducts,
   requestPurchase,
-  getPurchaseHistory,
+  getAvailablePurchases,
   finishTransaction,
   purchaseUpdatedListener,
   purchaseErrorListener,
-  type ProductPurchase,
-  type PurchaseError,
+  ErrorCode,
+  type Purchase,
 } from 'expo-iap';
 
 // 測試模式開關（開發時設為 true，上架前設為 false）
 const TEST_MODE = false;
+const PURCHASE_TIMEOUT_MS = 60000;
+
+type ListenerSubscription = {
+  remove: () => void;
+};
 
 // 購買結果類型
 export interface PurchaseResult {
   success: boolean;
   error?: string;
+}
+
+type PendingPurchase = {
+  productId: string;
+  resolve: (result: PurchaseResult) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+
+let isIAPConnected = false;
+let initIAPPromise: Promise<boolean> | null = null;
+let purchaseUpdateSubscription: ListenerSubscription | null = null;
+let purchaseErrorSubscription: ListenerSubscription | null = null;
+let pendingPurchase: PendingPurchase | null = null;
+
+function resolvePendingPurchase(result: PurchaseResult, productId?: string) {
+  if (!pendingPurchase) return;
+  if (productId && pendingPurchase.productId !== productId) return;
+
+  clearTimeout(pendingPurchase.timeoutId);
+  pendingPurchase.resolve(result);
+  pendingPurchase = null;
+}
+
+function normalizePurchaseError(error: Error | unknown): string {
+  const code = (error as { code?: string } | undefined)?.code;
+  if (code === ErrorCode.UserCancelled) {
+    return '使用者取消';
+  }
+
+  const message = (error as Error | undefined)?.message;
+  return message || '購買失敗，請稍後再試';
+}
+
+function registerIAPListeners() {
+  if (!purchaseUpdateSubscription) {
+    purchaseUpdateSubscription = purchaseUpdatedListener(
+      async (purchase: Purchase) => {
+        try {
+          if (purchase.productId === VIP_CONFIG.IAP_PRODUCT_ID) {
+            await handleVIPPurchase();
+          }
+
+          await finishTransaction({ purchase, isConsumable: false });
+          resolvePendingPurchase({ success: true }, purchase.productId);
+        } catch (error) {
+          console.error('[IAP] 處理購買失敗:', error);
+          resolvePendingPurchase(
+            { success: false, error: '完成購買時發生錯誤，請稍後再試' },
+            purchase.productId
+          );
+        }
+      }
+    );
+  }
+
+  if (!purchaseErrorSubscription) {
+    purchaseErrorSubscription = purchaseErrorListener((error) => {
+      console.error('[IAP] 購買錯誤:', error);
+      resolvePendingPurchase({ success: false, error: normalizePurchaseError(error) });
+    });
+  }
+}
+
+function removeIAPListeners() {
+  purchaseUpdateSubscription?.remove();
+  purchaseErrorSubscription?.remove();
+  purchaseUpdateSubscription = null;
+  purchaseErrorSubscription = null;
 }
 
 // 初始化 IAP
@@ -30,44 +103,44 @@ export async function initIAP(): Promise<boolean> {
     return true;
   }
 
-  try {
-    // 建立連線（對應原本的 Billing.connectAsync()）
-    const connected = await initConnection();
-
-    if (!connected) {
-      console.log('[IAP] 初始化失敗');
-      return false;
-    }
-
-    // 設定購買成功監聽器（對應原本的 Billing.setPurchaseListener()）
-    purchaseUpdatedListener(async (purchase: ProductPurchase) => {
-      try {
-        if (purchase.productId === VIP_CONFIG.IAP_PRODUCT_ID) {
-          await handleVIPPurchase(purchase);
-        }
-        // 完成交易
-        
-        await finishTransaction({ purchase, isConsumable: false });
-      } catch (error) {
-        console.error('[IAP] 處理購買失敗:', error);
-      }
-    });
-
-    // 設定購買失敗監聽器
-    purchaseErrorListener((error: PurchaseError) => {
-      console.error('[IAP] 購買錯誤:', error);
-    });
-
-    console.log('[IAP] 初始化成功');
+  if (isIAPConnected) {
     return true;
-  } catch (error) {
-    console.log('[IAP] 初始化錯誤（網頁版或無 IAP 支援）:', error);
-    return false;
   }
+
+  if (initIAPPromise) {
+    return initIAPPromise;
+  }
+
+  initIAPPromise = (async () => {
+    try {
+      registerIAPListeners();
+
+      // 建立連線前先掛上 listener，避免漏接商店回調
+      const connected = await initConnection();
+
+      if (!connected) {
+        console.log('[IAP] 初始化失敗');
+        removeIAPListeners();
+        return false;
+      }
+
+      isIAPConnected = true;
+      console.log('[IAP] 初始化成功');
+      return true;
+    } catch (error) {
+      console.log('[IAP] 初始化錯誤（網頁版或無 IAP 支援）:', error);
+      removeIAPListeners();
+      return false;
+    } finally {
+      initIAPPromise = null;
+    }
+  })();
+
+  return initIAPPromise;
 }
 
 // 處理 VIP 購買（內部使用）
-async function handleVIPPurchase(purchase: ProductPurchase): Promise<void> {
+async function handleVIPPurchase(): Promise<void> {
   try {
     await AsyncStorage.setItem(VIP_CONFIG.VIP_STORAGE_KEY, 'true');
     console.log('[IAP] VIP 購買成功，已儲存狀態');
@@ -91,9 +164,14 @@ export async function checkVIPStatus(): Promise<boolean> {
       return true;
     }
 
+    const connected = await initIAP();
+    if (!connected) {
+      return false;
+    }
+
     // 嘗試從 Google Play 取得購買歷史（對應原本的 Billing.getPurchaseHistoryAsync()）
     try {
-      const history = await getPurchaseHistory();
+      const history = await getAvailablePurchases();
 
       if (history && history.length > 0) {
         for (const purchase of history) {
@@ -130,15 +208,17 @@ export async function purchaseVIP(): Promise<PurchaseResult> {
   }
 
   try {
-    // 檢查是否在 Expo Go 環境（不支援 IAP）
-    if (!getProducts) {
-      return { success: false, error: 'IAP 不支援此環境，請使用獨立 App' };
+    if (pendingPurchase) {
+      return { success: false, error: '已有購買流程進行中，請稍候' };
+    }
+
+    const connected = await initIAP();
+    if (!connected) {
+      return { success: false, error: 'IAP 初始化失敗，請使用支援內購的 App 版本' };
     }
 
     // 取得商品資訊（對應原本的 Billing.getProductsAsync()）
-    
-    
-    const products = await getProducts({ skus: [VIP_CONFIG.IAP_PRODUCT_ID], type: 'in-app' });
+    const products = await fetchProducts({ skus: [VIP_CONFIG.IAP_PRODUCT_ID], type: 'in-app' });
     if (!products || products.length === 0) {
       return { success: false, error: '商品不存在，請稍後再試' };
     }
@@ -147,21 +227,33 @@ export async function purchaseVIP(): Promise<PurchaseResult> {
     console.log('[IAP] 商品資訊:', product);
 
     // 發起購買（對應原本的 Billing.purchaseAsync()）
-    // 使用正確的 API 格式
-    
-    await requestPurchase({ sku: VIP_CONFIG.IAP_PRODUCT_ID, type: 'in-app' });
+    const purchaseResultPromise = new Promise<PurchaseResult>((resolve) => {
+      pendingPurchase = {
+        productId: VIP_CONFIG.IAP_PRODUCT_ID,
+        resolve,
+        timeoutId: setTimeout(() => {
+          resolvePendingPurchase({ success: false, error: '購買逾時，請稍後再試' });
+        }, PURCHASE_TIMEOUT_MS),
+      };
+    });
 
-    // 購買結果由 purchaseUpdatedListener 處理
-    // 這裡樂觀地返回成功，實際寫入由 listener 完成
-    return { success: true };
-  } catch (error: any) {
-    // 使用者取消
-    if (error?.code === 'E_USER_CANCELLED') {
-      return { success: false, error: '使用者取消' };
+    try {
+      await requestPurchase({
+        request: {
+          apple: { sku: VIP_CONFIG.IAP_PRODUCT_ID },
+          google: { skus: [VIP_CONFIG.IAP_PRODUCT_ID] },
+        },
+        type: 'in-app',
+      });
+    } catch (error) {
+      resolvePendingPurchase({ success: false, error: normalizePurchaseError(error) });
+      throw error;
     }
 
+    return await purchaseResultPromise;
+  } catch (error: any) {
     console.error('[IAP] 購買錯誤:', error);
-    return { success: false, error: error?.message || '購買失敗，請稍後再試' };
+    return { success: false, error: normalizePurchaseError(error) };
   }
 }
 
@@ -174,8 +266,13 @@ export async function restorePurchases(): Promise<boolean> {
   }
 
   try {
+    const connected = await initIAP();
+    if (!connected) {
+      return false;
+    }
+
     // 取得購買歷史（對應原本的 Billing.getPurchaseHistoryAsync()）
-    const history = await getPurchaseHistory();
+    const history = await getAvailablePurchases();
 
     if (history && history.length > 0) {
       for (const purchase of history) {
@@ -200,8 +297,14 @@ export async function disconnectIAP(): Promise<void> {
   if (TEST_MODE) return;
 
   try {
+    resolvePendingPurchase({ success: false, error: '購買流程已中斷' });
+    removeIAPListeners();
+
     // 對應原本的 Billing.disconnectAsync()
-    await endConnection();
+    if (isIAPConnected) {
+      await endConnection();
+    }
+    isIAPConnected = false;
     console.log('[IAP] 已斷開連接');
   } catch (error) {
     console.log('[IAP] 斷開連接失敗（可能是網頁版）:', error);

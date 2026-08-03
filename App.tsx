@@ -8,7 +8,7 @@ import { NavigationContainer, useNavigation, useRoute, useFocusEffect, type Rout
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { CURRENCY, CATEGORIES } from './constants/theme';
 import { VIP_CONFIG } from './constants/version';
-import { checkVIPStatus, purchaseVIP, restorePurchases, initIAP } from './services/iap';
+import { checkVIPStatus, purchaseVIP, restorePurchases, initIAP, disconnectIAP } from './services/iap';
 import { templateData } from './features/templates/templates';
 import {
   getSubscriptions,
@@ -124,11 +124,19 @@ function HomeScreen() {
   const [showVIPModal, setShowVIPModal] = useState(false);
   const [purchasing, setPurchasing] = useState(false);
 
+  useEffect(() => {
+    return () => {
+      void disconnectIAP();
+    };
+  }, []);
+
   // ─── 初始化：從 Storage 載入資料 ────────────────────────────
   useFocusEffect(
     useCallback(() => {
       async function loadData() {
         try {
+          await initIAP();
+
           const [savedSubs, savedPMs, vipStatus] = await Promise.all([
             getSubscriptions(),
             getPaymentMethods(),
@@ -137,9 +145,6 @@ function HomeScreen() {
           setSubscriptions(savedSubs);
           setPaymentMethods(savedPMs);
           setIsVIP(vipStatus);
-
-          // 初始化 IAP
-          await initIAP();
 
           const hasPermission = await requestNotificationPermission();
           setNotificationsEnabled(hasPermission);
@@ -242,12 +247,18 @@ function HomeScreen() {
 
   // ─── 切換啟用 / 暫停 ─────────────────────────────────────────
   const toggleStatus = async (id: string) => {
-    const updated = subscriptions.map(sub =>
-      sub.id === id
-        ? { ...sub, status: sub.status === 'active' ? 'paused' : 'active',
-            updatedAt: new Date().toISOString() }
-        : sub
-    );
+    const updated: Subscription[] = subscriptions.map((sub) => {
+      if (sub.id !== id) return sub;
+
+      const nextStatus: Subscription['status'] =
+        sub.status === 'active' ? 'paused' : 'active';
+
+      return {
+        ...sub,
+        status: nextStatus,
+        updatedAt: new Date().toISOString(),
+      };
+    });
     setSubscriptions(updated);
     await saveSubscriptions(updated);
     if (notificationsEnabled) await scheduleBillingReminders(updated);
